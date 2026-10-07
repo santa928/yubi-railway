@@ -1,0 +1,2 @@
+import {build} from 'esbuild';import {mkdir,copyFile,rm} from 'node:fs/promises';
+await rm('dist',{recursive:true,force:true});await mkdir('dist',{recursive:true});for(const name of ['index.html','style.css'])await copyFile(`src/${name}`,`dist/${name}`);await build({entryPoints:['src/main.mjs'],bundle:true,minify:true,target:['safari16','chrome110'],format:'iife',outfile:'dist/app.js',legalComments:'eof'});
