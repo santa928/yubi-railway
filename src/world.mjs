@@ -1,48 +1,537 @@
-import * as THREE from 'three';
-import {createRailway,pointAt,CONFIG} from './railway.mjs';
-import {createModelKit} from './models.mjs';
-import {createEffects} from './effects.mjs';
-const AZ=Math.atan2(10,18),RIGHT=new THREE.Vector3(Math.cos(AZ),0,-Math.sin(AZ)),FORWARD=new THREE.Vector3(Math.sin(AZ),0,Math.cos(AZ));
-const OFFSET=new THREE.Vector3(10,24,18),ELEV=24/OFFSET.length();
-const clamp=THREE.MathUtils.clamp;
-export function createWorld({width=390,height=760,reducedMotion=false}={}){
- const scene=new THREE.Scene();scene.background=new THREE.Color('#c9e8df');
- const camera=new THREE.OrthographicCamera(-8,8,14,-14,.1,140);const kit=createModelKit(THREE),railway=createRailway({startReady:r=>screenLength(r)>=210,minimumReady:r=>screenLength(r)>=70,speedForRoute:r=>84/pixelScale(pointAt(r,r.distance)),tipGapForRoute:r=>76/pixelScale(pointAt(r,r.total))});
- const root=new THREE.Group();scene.add(root);const matCache=new Map(),sharedGeo=new THREE.BoxGeometry(1,1,1),sleepGeo=new THREE.BoxGeometry(.98,.085,.16);
- const mat=(color)=>{if(!matCache.has(color))matCache.set(color,new THREE.MeshStandardMaterial({color,roughness:.83,metalness:0}));return matCache.get(color);};
- const meshBox=(parent,color,w,h,d,x=0,y=0,z=0)=>{const m=new THREE.Mesh(sharedGeo,mat(color));m.scale.set(w,h,d);m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;};
- const sky=new THREE.HemisphereLight('#fff3d4','#668876',2.2);scene.add(sky);const sun=new THREE.DirectionalLight('#fff2d7',3.1);sun.position.set(-12,24,10);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-26;sun.shadow.camera.right=26;sun.shadow.camera.top=30;sun.shadow.camera.bottom=-30;sun.shadow.camera.near=1;sun.shadow.camera.far=70;sun.shadow.bias=-.0005;sun.shadow.normalBias=.025;scene.add(sun,sun.target);
- const floor=meshBox(root,'#a8ce92',120,.4,120,0,-.24,0);floor.castShadow=false;
- const tracks=new Map(),lots=[],groves=[];let widthPx=width,heightPx=height,viewWidth=16,viewDepth=35,scroll=0,time=0,nextGrove=-30,seed=0,townIndex=0;
- const raycaster=new THREE.Raycaster(),ground=new THREE.Plane(new THREE.Vector3(0,1,0),-.06),hit=new THREE.Vector3();
- const along=p=>p.x*FORWARD.x+p.z*FORWARD.z,across=p=>p.x*RIGHT.x+p.z*RIGHT.z;
- function pixelScale(p){const len=Math.hypot(p.dx,p.dz)||1,u=(p.dx*RIGHT.x+p.dz*RIGHT.z)/len,v=(p.dx*FORWARD.x+p.dz*FORWARD.z)/len;return widthPx/viewWidth*Math.max(.2,Math.hypot(u,v*ELEV));}
- function screenLength(r){let sum=0;for(let i=1;i<r.points.length;i++){const dx=r.points[i].x-r.points[i-1].x,dz=r.points[i].z-r.points[i-1].z;sum+=Math.hypot(dx*RIGHT.x+dz*RIGHT.z,(dx*FORWARD.x+dz*FORWARD.z)*ELEV)*widthPx/viewWidth;}return sum;}
- const viewPoint=(u,v)=>({x:RIGHT.x*u+FORWARD.x*v,z:RIGHT.z*u+FORWARD.z*v});
- function setView(w,h){widthPx=w;heightPx=h;viewWidth=clamp(w/24,14,36);const vh=viewWidth*h/w;viewDepth=vh/ELEV;camera.left=-viewWidth/2;camera.right=viewWidth/2;camera.top=vh/2;camera.bottom=-vh/2;camera.updateProjectionMatrix();updateCamera();}
- function updateCamera(){const target=FORWARD.clone().multiplyScalar(scroll);camera.position.copy(target).add(OFFSET);camera.lookAt(target);camera.updateMatrixWorld();floor.position.x=target.x;floor.position.z=target.z;sun.position.copy(target).add(new THREE.Vector3(-12,24,10));sun.target.position.copy(target);sun.target.updateMatrixWorld();}
- function pick(x,y){raycaster.setFromCamera(new THREE.Vector2(x/widthPx*2-1,1-y/heightPx*2),camera);return raycaster.ray.intersectPlane(ground,hit)?{x:hit.x,z:hit.z}:null;}
- function disposeTrack(t){t.group.traverse(o=>{if(o.userData.owned)o.geometry?.dispose();if(o.isInstancedMesh)o.dispose();});root.remove(t.group);}
- function strip(points,offset,halfWidth,y,color){const verts=[],inds=[];for(let i=0;i<points.length;i++){const a=points[Math.max(0,i-1)],b=points[Math.min(points.length-1,i+1)],dx=b.x-a.x,dz=b.z-a.z,len=Math.hypot(dx,dz)||1,nx=dz/len,nz=-dx/len,p=points[i];for(const side of [-1,1])verts.push(p.x+nx*(offset+side*halfWidth),y,p.z+nz*(offset+side*halfWidth));if(i){const n=i*2;inds.push(n-2,n,n-1,n,n+1,n-1);}}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));g.setIndex(inds);g.computeVertexNormals();const m=new THREE.Mesh(g,mat(color));m.userData.owned=true;m.receiveShadow=true;return m;}
- function syncTrack(r,force=false){let t=tracks.get(r.id);if(!t){t={group:new THREE.Group(),revision:-1,cars:[],lastBuild:-1};root.add(t.group);tracks.set(r.id,t);}if(t.revision!==r.revision&&(time-t.lastBuild>.065||r.committed||force)){if(t.railGroup){t.railGroup.traverse(o=>{if(o.userData.owned)o.geometry?.dispose();if(o.isInstancedMesh)o.dispose();});t.group.remove(t.railGroup);}const g=new THREE.Group();t.railGroup=g;t.group.add(g);if(r.points.length>1){g.add(strip(r.points,0,.59,.025,'#b2b79a'));g.add(strip(r.points,0,.46,.055,'#d9ccac'));g.add(strip(r.points,-.29,.043,.145,'#526c72'));g.add(strip(r.points,.29,.043,.145,'#526c72'));const count=Math.min(600,Math.floor(r.total/.48)+1),ties=new THREE.InstancedMesh(sleepGeo,mat('#fbebc6'),count),dummy=new THREE.Object3D();for(let i=0;i<count;i++){const p=pointAt(r,i*.48);dummy.position.set(p.x,.093,p.z);dummy.rotation.y=Math.atan2(p.dx,p.dz);dummy.updateMatrix();ties.setMatrixAt(i,dummy.matrix);}ties.receiveShadow=true;g.add(ties);}t.revision=r.revision;t.lastBuild=time;}
- if(r.running&&t.cars.length===0){for(let i=0;i<r.carCount;i++){const car=kit.trainCar(i===0||i===r.carCount-1?'cab':'coach',r.id);car.scale.setScalar(r.carWidth/1.9);t.group.add(car);t.cars.push(car);}}
- railway.cars(r).forEach((c,i)=>{const p=pointAt(r,c.distance),a=pointAt(r,c.distance-.22),b=pointAt(r,c.distance+.22),car=t.cars[i];if(!car)return;car.position.set(p.x,.17,p.z);car.rotation.y=Math.atan2(b.x-a.x,b.z-a.z)+(c.reversed?Math.PI:0);});}
- function removeLot(i){root.remove(lots[i].group);lots.splice(i,1);}
- function spawnTown(r,d){const p=pointAt(r,d),len=Math.hypot(p.dx,p.dz)||1,nx=p.dz/len,nz=-p.dx/len,side=seed++%2?1:-1;const district=Math.floor(along(p)/18);if(district%4===2&&seed%3!==0)return;let chosen=null;for(let a=0;a<8;a++){const sign=a%2?-side:side,offset=2.55+Math.floor(a/2)*.45,shift=(a%3-1)*.9,x=p.x+nx*sign*offset+p.dx/len*shift,z=p.z+nz*sign*offset+p.dz/len*shift;if(Math.abs(across({x,z}))>viewWidth*.5-1.35)continue;if(lots.some(q=>Math.hypot(q.x-x,q.z-z)<2.7))continue;if(railway.routes.some(q=>q.points.some(v=>Math.hypot(v.x-x,v.z-z)<1.8)))continue;chosen={x,z};break;}if(!chosen)return;
- const g=new THREE.Group();g.position.set(chosen.x,0,chosen.z);g.rotation.y=Math.atan2(p.x-chosen.x,p.z-chosen.z);root.add(g);const kind=['house','shop','playground','cinema','house','greenhouse','fountainPlaza','station','flowerGarden','tower','civic','house'][townIndex++%12];g.userData.townKind=kind;const isPark=['park','playground','fountainPlaza','flowerGarden'].includes(kind);meshBox(g,isPark?'#8abb7a':'#eee1be',3.0,.1,2.8,0,.015,0);const model=isPark?kit.park(seed,kind):kit.building(kind,seed);model.position.y=.075;model.scale.setScalar(kind==='station'?.94:isPark?1:1);g.add(model);if(kind==='house'||kind==='shop'){const tree=kit.tree(seed,seed%2?'flowering':undefined);tree.scale.setScalar(.6);tree.position.set(-1.08,.08,-.75);g.add(tree);}
- // A real walkway connects the plot frontage to the rail verge.
- const distance=Math.hypot(p.x-chosen.x,p.z-chosen.z),walk=Math.max(.1,distance-1.8);meshBox(g,'#e9d6ae',.42,.04,walk,0,.035,1.35+walk/2);
- const lot={group:g,model,x:chosen.x,z:chosen.z,born:time,routeId:r.id,targetScale:model.scale.x};model.scale.setScalar(reducedMotion?lot.targetScale:.001);lots.push(lot);effects.birth(chosen);if(lots.length>32)removeLot(0);}
- function seedTerrain(){while(nextGrove<scroll+viewDepth*.6+8){const row=Math.round(nextGrove/6);for(const side of [-1,1]){if((row+side)%3===0)continue;const p=viewPoint(side*(viewWidth*.42-((row%3+3)%3)*.32),nextGrove);const group=new THREE.Group();group.position.set(p.x,0,p.z);const patch=new THREE.Mesh(new THREE.CylinderGeometry(1.8,1.8,.045,14),mat(row%2?'#94bf80':'#b4d99a'));patch.position.y=-.007;patch.scale.z=.78;patch.receiveShadow=true;patch.userData.owned=true;group.add(patch);for(let k=0;k<2;k++){const tree=kit.tree(row*7+k,(row+k)%3===0?'flowering':undefined);tree.position.set((k-.5)*.9,0,k*.48);tree.scale.setScalar(.70+k*.10);group.add(tree);}root.add(group);groves.push({group,x:p.x,z:p.z});}nextGrove+=6;}}
- const effects=createEffects(THREE,root,{reducedMotion});
- function setTouch(p,key){effects.setTouch(p,key);}
- function clearIntersecting(p){for(let i=lots.length-1;i>=0;i--)if(Math.hypot(lots[i].x-p.x,lots[i].z-p.z)<1.5)removeLot(i);for(let i=groves.length-1;i>=0;i--)if(Math.hypot(groves[i].x-p.x,groves[i].z-p.z)<1.5){groves[i].group.traverse(o=>{if(o.userData.owned)o.geometry.dispose();});root.remove(groves[i].group);groves.splice(i,1);}}
- function tick(dt,{paused=false}={}){if(!paused){time+=dt;scroll+=68/(widthPx/viewWidth)/ELEV*dt;updateCamera();railway.step(dt);}for(const e of railway.drain()){if(e.kind==='town')spawnTown(e.route,e.distance);else if(e.kind==='remove'){const t=tracks.get(e.id);if(t){disposeTrack(t);tracks.delete(e.id);}for(let i=lots.length-1;i>=0;i--)if(lots[i].routeId===e.id)removeLot(i);}}if(!paused){seedTerrain();const cutoff=scroll-viewDepth*.65-8;for(const r of [...railway.routes])if(!railway.isActive(r)&&r.points.every(p=>along(p)<cutoff))railway.remove(r);for(let i=lots.length-1;i>=0;i--)if(along(lots[i])<cutoff)removeLot(i);for(let i=groves.length-1;i>=0;i--)if(along(groves[i])<cutoff||groves.length>28){groves[i].group.traverse(o=>{if(o.userData.owned)o.geometry.dispose();});root.remove(groves[i].group);groves.splice(i,1);}}
- for(const r of railway.routes)syncTrack(r,paused);for(const l of lots){const t=clamp((time-l.born)/.7,0,1),s=reducedMotion?1:1+2.2*(t-1)**3+1.2*(t-1)**2;l.model.scale.setScalar(Math.max(.001,s*l.targetScale));l.model.position.y=.075+(reducedMotion?0:Math.sin(t*Math.PI)*.28);}
- effects.tick(paused?0:dt);return stats();}
- function clear(){railway.clear();for(const t of tracks.values())disposeTrack(t);tracks.clear();for(const l of lots)root.remove(l.group);lots.length=0;for(const g of groves){g.group.traverse(o=>{if(o.userData.owned)o.geometry.dispose();});root.remove(g.group);}groves.length=0;railway.drain();scroll=0;time=0;seed=0;townIndex=0;effects.clear();nextGrove=-viewDepth*.6;setTouch(null);updateCamera();seedTerrain();}
- function stats(){return{routes:railway.routes.length,trains:railway.routes.filter(r=>r.running).length,plots:lots.length,groves:groves.length,drawing:railway.actives.size>0,scroll,time,townKinds:lots.map(l=>l.group.userData.townKind),effects:effects.stats()};}
- function demo(){const r=railway.begin(viewPoint(-viewWidth*.30,scroll+viewDepth*.36));if(!r)return null;for(let i=1;i<=90;i++){const t=i/90,p=viewPoint(Math.sin(t*Math.PI*2.7)*viewWidth*.27,scroll+viewDepth*(.36-.70*t));railway.add(p);}railway.finish(true);return r;}
- function dispose(){clear();root.traverse(o=>{if(o.userData.owned)o.geometry?.dispose();});sharedGeo.dispose();sleepGeo.dispose();effects.dispose();for(const m of matCache.values())m.dispose();kit.dispose();}
- setView(width,height);nextGrove=-viewDepth*.6;seedTerrain();return{scene,camera,sun,railway,kit,pick,setView,tick,clear,dispose,setTouch,clearIntersecting,demo,stats,viewPoint,root};
+import * as THREE from "three";
+import { createRailway, pointAt, CONFIG, speedMultiplier } from "./railway.mjs";
+import { createModelKit } from "./models.mjs";
+import { createEffects } from "./effects.mjs";
+import { createCrossings } from "./crossings.mjs";
+const AZ = Math.atan2(10, 18),
+  RIGHT = new THREE.Vector3(Math.cos(AZ), 0, -Math.sin(AZ)),
+  FORWARD = new THREE.Vector3(Math.sin(AZ), 0, Math.cos(AZ));
+const OFFSET = new THREE.Vector3(10, 24, 18),
+  ELEV = 24 / OFFSET.length();
+const clamp = THREE.MathUtils.clamp;
+export function createWorld({
+  width = 390,
+  height = 760,
+  reducedMotion = false,
+} = {}) {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color("#c9e8df");
+  const camera = new THREE.OrthographicCamera(-8, 8, 14, -14, 0.1, 140);
+  const kit = createModelKit(THREE),
+    railway = createRailway({
+      startReady: (r) => screenLength(r) >= 210,
+      minimumReady: (r) => screenLength(r) >= 70,
+      speedForRoute: (r) =>
+        (84 * speedMultiplier(r.total)) / pixelScale(pointAt(r, r.distance)),
+      tipGapForRoute: (r) => 76 / pixelScale(pointAt(r, r.total)),
+    });
+  const root = new THREE.Group();
+  scene.add(root);
+  const matCache = new Map(),
+    sharedGeo = new THREE.BoxGeometry(1, 1, 1),
+    sleepGeo = new THREE.BoxGeometry(0.98, 0.085, 0.16);
+  const mat = (color) => {
+    if (!matCache.has(color))
+      matCache.set(
+        color,
+        new THREE.MeshStandardMaterial({
+          color,
+          roughness: 0.83,
+          metalness: 0,
+        }),
+      );
+    return matCache.get(color);
+  };
+  const meshBox = (parent, color, w, h, d, x = 0, y = 0, z = 0) => {
+    const m = new THREE.Mesh(sharedGeo, mat(color));
+    m.scale.set(w, h, d);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    parent.add(m);
+    return m;
+  };
+  const sky = new THREE.HemisphereLight("#fff3d4", "#668876", 2.2);
+  scene.add(sky);
+  const sun = new THREE.DirectionalLight("#fff2d7", 3.1);
+  sun.position.set(-12, 24, 10);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.left = -26;
+  sun.shadow.camera.right = 26;
+  sun.shadow.camera.top = 30;
+  sun.shadow.camera.bottom = -30;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 70;
+  sun.shadow.bias = -0.0005;
+  sun.shadow.normalBias = 0.025;
+  scene.add(sun, sun.target);
+  const floor = meshBox(root, "#a8ce92", 120, 0.4, 120, 0, -0.24, 0);
+  floor.castShadow = false;
+  const tracks = new Map(),
+    lots = [],
+    groves = [];
+  let widthPx = width,
+    heightPx = height,
+    viewWidth = 16,
+    viewDepth = 35,
+    scroll = 0,
+    time = 0,
+    nextGrove = -30,
+    seed = 0,
+    townIndex = 0;
+  const raycaster = new THREE.Raycaster(),
+    ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.06),
+    hit = new THREE.Vector3();
+  const along = (p) => p.x * FORWARD.x + p.z * FORWARD.z,
+    across = (p) => p.x * RIGHT.x + p.z * RIGHT.z;
+  function pixelScale(p) {
+    const len = Math.hypot(p.dx, p.dz) || 1,
+      u = (p.dx * RIGHT.x + p.dz * RIGHT.z) / len,
+      v = (p.dx * FORWARD.x + p.dz * FORWARD.z) / len;
+    return (widthPx / viewWidth) * Math.max(0.2, Math.hypot(u, v * ELEV));
+  }
+  function screenLength(r) {
+    let sum = 0;
+    for (let i = 1; i < r.points.length; i++) {
+      const dx = r.points[i].x - r.points[i - 1].x,
+        dz = r.points[i].z - r.points[i - 1].z;
+      sum +=
+        (Math.hypot(
+          dx * RIGHT.x + dz * RIGHT.z,
+          (dx * FORWARD.x + dz * FORWARD.z) * ELEV,
+        ) *
+          widthPx) /
+        viewWidth;
+    }
+    return sum;
+  }
+  const viewPoint = (u, v) => ({
+    x: RIGHT.x * u + FORWARD.x * v,
+    z: RIGHT.z * u + FORWARD.z * v,
+  });
+  function setView(w, h) {
+    widthPx = w;
+    heightPx = h;
+    viewWidth = clamp(w / 24, 14, 36);
+    const vh = (viewWidth * h) / w;
+    viewDepth = vh / ELEV;
+    camera.left = -viewWidth / 2;
+    camera.right = viewWidth / 2;
+    camera.top = vh / 2;
+    camera.bottom = -vh / 2;
+    camera.updateProjectionMatrix();
+    updateCamera();
+  }
+  function updateCamera() {
+    const target = FORWARD.clone().multiplyScalar(scroll);
+    camera.position.copy(target).add(OFFSET);
+    camera.lookAt(target);
+    camera.updateMatrixWorld();
+    floor.position.x = target.x;
+    floor.position.z = target.z;
+    sun.position.copy(target).add(new THREE.Vector3(-12, 24, 10));
+    sun.target.position.copy(target);
+    sun.target.updateMatrixWorld();
+  }
+  function pick(x, y) {
+    raycaster.setFromCamera(
+      new THREE.Vector2((x / widthPx) * 2 - 1, 1 - (y / heightPx) * 2),
+      camera,
+    );
+    return raycaster.ray.intersectPlane(ground, hit)
+      ? { x: hit.x, z: hit.z }
+      : null;
+  }
+  function disposeTrack(t) {
+    t.group.traverse((o) => {
+      if (o.userData.owned) o.geometry?.dispose();
+      if (o.isInstancedMesh) o.dispose();
+    });
+    root.remove(t.group);
+  }
+  function strip(points, offset, halfWidth, y, color) {
+    const verts = [],
+      inds = [];
+    for (let i = 0; i < points.length; i++) {
+      const a = points[Math.max(0, i - 1)],
+        b = points[Math.min(points.length - 1, i + 1)],
+        dx = b.x - a.x,
+        dz = b.z - a.z,
+        len = Math.hypot(dx, dz) || 1,
+        nx = dz / len,
+        nz = -dx / len,
+        p = points[i];
+      for (const side of [-1, 1])
+        verts.push(
+          p.x + nx * (offset + side * halfWidth),
+          y,
+          p.z + nz * (offset + side * halfWidth),
+        );
+      if (i) {
+        const n = i * 2;
+        inds.push(n - 2, n, n - 1, n, n + 1, n - 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    g.setIndex(inds);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat(color));
+    m.userData.owned = true;
+    m.receiveShadow = true;
+    return m;
+  }
+  function syncTrack(r, force = false) {
+    let t = tracks.get(r.id);
+    if (!t) {
+      t = { group: new THREE.Group(), revision: -1, cars: [], lastBuild: -1 };
+      root.add(t.group);
+      tracks.set(r.id, t);
+    }
+    if (
+      t.revision !== r.revision &&
+      (time - t.lastBuild > 0.065 || r.committed || force)
+    ) {
+      if (t.railGroup) {
+        t.railGroup.traverse((o) => {
+          if (o.userData.owned) o.geometry?.dispose();
+          if (o.isInstancedMesh) o.dispose();
+        });
+        t.group.remove(t.railGroup);
+      }
+      const g = new THREE.Group();
+      t.railGroup = g;
+      t.group.add(g);
+      if (r.points.length > 1) {
+        g.add(strip(r.points, 0, 0.59, 0.025, "#b2b79a"));
+        g.add(strip(r.points, 0, 0.46, 0.055, "#d9ccac"));
+        g.add(strip(r.points, -0.29, 0.043, 0.145, "#526c72"));
+        g.add(strip(r.points, 0.29, 0.043, 0.145, "#526c72"));
+        const count = Math.min(600, Math.floor(r.total / 0.48) + 1),
+          ties = new THREE.InstancedMesh(sleepGeo, mat("#fbebc6"), count),
+          dummy = new THREE.Object3D();
+        for (let i = 0; i < count; i++) {
+          const p = pointAt(r, i * 0.48);
+          dummy.position.set(p.x, 0.093, p.z);
+          dummy.rotation.y = Math.atan2(p.dx, p.dz);
+          dummy.updateMatrix();
+          ties.setMatrixAt(i, dummy.matrix);
+        }
+        ties.receiveShadow = true;
+        g.add(ties);
+      }
+      t.revision = r.revision;
+      t.lastBuild = time;
+    }
+    if (r.running && t.cars.length === 0) {
+      for (let i = 0; i < r.carCount; i++) {
+        const car = kit.trainCar(
+          i === 0 || i === r.carCount - 1 ? "cab" : "coach",
+          r.id,
+        );
+        car.scale.setScalar(r.carWidth / 1.9);
+        t.group.add(car);
+        t.cars.push(car);
+      }
+    }
+    railway.cars(r).forEach((c, i) => {
+      const p = pointAt(r, c.distance),
+        a = pointAt(r, c.distance - 0.22),
+        b = pointAt(r, c.distance + 0.22),
+        car = t.cars[i];
+      if (!car) return;
+      car.position.set(p.x, 0.17, p.z);
+      car.rotation.y =
+        Math.atan2(b.x - a.x, b.z - a.z) + (c.reversed ? Math.PI : 0);
+    });
+  }
+  function removeLot(i) {
+    root.remove(lots[i].group);
+    lots.splice(i, 1);
+  }
+  function spawnTown(r, d) {
+    if (d > 1 && Math.round(d / CONFIG.townSpacing) % 5 === 1)
+      crossings.spawn(r, d);
+    const p = pointAt(r, d),
+      len = Math.hypot(p.dx, p.dz) || 1,
+      nx = p.dz / len,
+      nz = -p.dx / len,
+      side = seed++ % 2 ? 1 : -1;
+    const district = Math.floor(along(p) / 18);
+    if (district % 4 === 2 && seed % 3 !== 0) return;
+    let chosen = null;
+    for (let a = 0; a < 8; a++) {
+      const sign = a % 2 ? -side : side,
+        offset = 2.55 + Math.floor(a / 2) * 0.45,
+        shift = ((a % 3) - 1) * 0.9,
+        x = p.x + nx * sign * offset + (p.dx / len) * shift,
+        z = p.z + nz * sign * offset + (p.dz / len) * shift;
+      if (Math.abs(across({ x, z })) > viewWidth * 0.5 - 1.35) continue;
+      if (lots.some((q) => Math.hypot(q.x - x, q.z - z) < 2.7)) continue;
+      if (
+        railway.routes.some((q) =>
+          q.points.some((v) => Math.hypot(v.x - x, v.z - z) < 1.8),
+        )
+      )
+        continue;
+      chosen = { x, z };
+      break;
+    }
+    if (!chosen) return;
+    const g = new THREE.Group();
+    g.position.set(chosen.x, 0, chosen.z);
+    g.rotation.y = Math.atan2(p.x - chosen.x, p.z - chosen.z);
+    root.add(g);
+    const kind = [
+      "house",
+      "shop",
+      "playground",
+      "cinema",
+      "house",
+      "greenhouse",
+      "fountainPlaza",
+      "station",
+      "flowerGarden",
+      "tower",
+      "civic",
+      "house",
+    ][townIndex++ % 12];
+    g.userData.townKind = kind;
+    const isPark = [
+      "park",
+      "playground",
+      "fountainPlaza",
+      "flowerGarden",
+    ].includes(kind);
+    meshBox(g, isPark ? "#8abb7a" : "#eee1be", 3.0, 0.1, 2.8, 0, 0.015, 0);
+    const model = isPark ? kit.park(seed, kind) : kit.building(kind, seed);
+    model.position.y = 0.075;
+    model.scale.setScalar(kind === "station" ? 0.94 : isPark ? 1 : 1);
+    g.add(model);
+    if (kind === "house" || kind === "shop") {
+      const tree = kit.tree(seed, seed % 2 ? "flowering" : undefined);
+      tree.scale.setScalar(0.6);
+      tree.position.set(-1.08, 0.08, -0.75);
+      g.add(tree);
+    }
+    // A real walkway connects the plot frontage to the rail verge.
+    const distance = Math.hypot(p.x - chosen.x, p.z - chosen.z),
+      walk = Math.max(0.1, distance - 1.8);
+    meshBox(g, "#e9d6ae", 0.42, 0.04, walk, 0, 0.035, 1.35 + walk / 2);
+    const lot = {
+      group: g,
+      model,
+      x: chosen.x,
+      z: chosen.z,
+      born: time,
+      routeId: r.id,
+      targetScale: model.scale.x,
+    };
+    model.scale.setScalar(reducedMotion ? lot.targetScale : 0.001);
+    lots.push(lot);
+    effects.birth(chosen);
+    if (lots.length > 32) removeLot(0);
+  }
+  function seedTerrain() {
+    while (nextGrove < scroll + viewDepth * 0.6 + 8) {
+      const row = Math.round(nextGrove / 6);
+      for (const side of [-1, 1]) {
+        if ((row + side) % 3 === 0) continue;
+        const p = viewPoint(
+          side * (viewWidth * 0.42 - (((row % 3) + 3) % 3) * 0.32),
+          nextGrove,
+        );
+        const group = new THREE.Group();
+        group.position.set(p.x, 0, p.z);
+        const patch = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.8, 1.8, 0.045, 14),
+          mat(row % 2 ? "#94bf80" : "#b4d99a"),
+        );
+        patch.position.y = -0.007;
+        patch.scale.z = 0.78;
+        patch.receiveShadow = true;
+        patch.userData.owned = true;
+        group.add(patch);
+        for (let k = 0; k < 2; k++) {
+          const tree = kit.tree(
+            row * 7 + k,
+            (row + k) % 3 === 0 ? "flowering" : undefined,
+          );
+          tree.position.set((k - 0.5) * 0.9, 0, k * 0.48);
+          tree.scale.setScalar(0.7 + k * 0.1);
+          group.add(tree);
+        }
+        root.add(group);
+        groves.push({ group, x: p.x, z: p.z });
+      }
+      nextGrove += 6;
+    }
+  }
+  const effects = createEffects(THREE, root, { reducedMotion });
+  const crossings = createCrossings(THREE, root, meshBox, mat, pointAt);
+  function setTouch(p, key) {
+    effects.setTouch(p, key);
+  }
+  function clearIntersecting(p) {
+    for (let i = lots.length - 1; i >= 0; i--)
+      if (Math.hypot(lots[i].x - p.x, lots[i].z - p.z) < 1.5) removeLot(i);
+    for (let i = groves.length - 1; i >= 0; i--)
+      if (Math.hypot(groves[i].x - p.x, groves[i].z - p.z) < 1.5) {
+        groves[i].group.traverse((o) => {
+          if (o.userData.owned) o.geometry.dispose();
+        });
+        root.remove(groves[i].group);
+        groves.splice(i, 1);
+      }
+  }
+  function tick(dt, { paused = false } = {}) {
+    if (!paused) {
+      time += dt;
+      scroll += (68 / (widthPx / viewWidth) / ELEV) * dt;
+      updateCamera();
+      railway.step(dt);
+    }
+    for (const e of railway.drain()) {
+      if (e.kind === "town") spawnTown(e.route, e.distance);
+      else if (e.kind === "remove") {
+        crossings.removeRoute(e.id);
+        const t = tracks.get(e.id);
+        if (t) {
+          disposeTrack(t);
+          tracks.delete(e.id);
+        }
+        for (let i = lots.length - 1; i >= 0; i--)
+          if (lots[i].routeId === e.id) removeLot(i);
+      }
+    }
+    if (!paused) {
+      seedTerrain();
+      const cutoff = scroll - viewDepth * 0.65 - 8;
+      for (const r of [...railway.routes])
+        if (!railway.isActive(r) && r.points.every((p) => along(p) < cutoff))
+          railway.remove(r);
+      for (let i = lots.length - 1; i >= 0; i--)
+        if (along(lots[i]) < cutoff) removeLot(i);
+      for (let i = groves.length - 1; i >= 0; i--)
+        if (along(groves[i]) < cutoff || groves.length > 28) {
+          groves[i].group.traverse((o) => {
+            if (o.userData.owned) o.geometry.dispose();
+          });
+          root.remove(groves[i].group);
+          groves.splice(i, 1);
+        }
+    }
+    for (const r of railway.routes) syncTrack(r, paused);
+    for (const l of lots) {
+      const t = clamp((time - l.born) / 0.7, 0, 1),
+        s = reducedMotion ? 1 : 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2;
+      l.model.scale.setScalar(Math.max(0.001, s * l.targetScale));
+      l.model.position.y =
+        0.075 + (reducedMotion ? 0 : Math.sin(t * Math.PI) * 0.28);
+    }
+    crossings.tick(
+      paused ? 0 : dt,
+      railway.routes,
+      time,
+      scroll - viewDepth * 0.65 - 8,
+      along,
+    );
+    effects.tick(paused ? 0 : dt);
+    return stats();
+  }
+  function clear() {
+    crossings.clear();
+    railway.clear();
+    for (const t of tracks.values()) disposeTrack(t);
+    tracks.clear();
+    for (const l of lots) root.remove(l.group);
+    lots.length = 0;
+    for (const g of groves) {
+      g.group.traverse((o) => {
+        if (o.userData.owned) o.geometry.dispose();
+      });
+      root.remove(g.group);
+    }
+    groves.length = 0;
+    railway.drain();
+    scroll = 0;
+    time = 0;
+    seed = 0;
+    townIndex = 0;
+    effects.clear();
+    nextGrove = -viewDepth * 0.6;
+    setTouch(null);
+    updateCamera();
+    seedTerrain();
+  }
+  function stats() {
+    return {
+      routes: railway.routes.length,
+      trains: railway.routes.filter((r) => r.running).length,
+      plots: lots.length,
+      groves: groves.length,
+      drawing: railway.actives.size > 0,
+      scroll,
+      time,
+      townKinds: lots.map((l) => l.group.userData.townKind),
+      effects: effects.stats(),
+      crossings: crossings.stats(),
+      routeState: railway.routes.map((r) => ({
+        id: r.id,
+        length: r.total,
+        distance: r.distance,
+        direction: r.direction,
+        speedMultiplier: speedMultiplier(r.total),
+      })),
+    };
+  }
+  function demo() {
+    const r = railway.begin(
+      viewPoint(-viewWidth * 0.3, scroll + viewDepth * 0.36),
+    );
+    if (!r) return null;
+    for (let i = 1; i <= 90; i++) {
+      const t = i / 90,
+        p = viewPoint(
+          Math.sin(t * Math.PI * 2.7) * viewWidth * 0.27,
+          scroll + viewDepth * (0.36 - 0.7 * t),
+        );
+      railway.add(p);
+    }
+    railway.finish(true);
+    return r;
+  }
+  function dispose() {
+    clear();
+    root.traverse((o) => {
+      if (o.userData.owned) o.geometry?.dispose();
+    });
+    sharedGeo.dispose();
+    sleepGeo.dispose();
+    effects.dispose();
+    for (const m of matCache.values()) m.dispose();
+    kit.dispose();
+  }
+  setView(width, height);
+  nextGrove = -viewDepth * 0.6;
+  seedTerrain();
+  return {
+    scene,
+    camera,
+    sun,
+    railway,
+    kit,
+    pick,
+    setView,
+    tick,
+    clear,
+    dispose,
+    setTouch,
+    clearIntersecting,
+    demo,
+    stats,
+    viewPoint,
+    root,
+  };
 }
