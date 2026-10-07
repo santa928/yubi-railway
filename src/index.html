@@ -53,47 +53,56 @@
         </div>
         <div class="sound-controls">
           <button
-            id="sound"
+            id="sound-toggle"
             type="button"
-            aria-label="音を消す"
-            aria-pressed="false"
-          >
-            音あり</button
-          ><label
-            >音量<input
-              id="volume"
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value="0.35"
-              aria-label="音量"
-          /></label>
-          <details class="music-credit">
-            <summary aria-label="音楽クレジット">♪</summary>
-            <div>
-              <strong>音楽クレジット</strong>
-              <p>
-                I've Been Working on the Railroad<br />Traditional / audio
-                provided by
-                <a
-                  href="https://www.8notes.com/scores/6974.asp"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  >8notes.com</a
-                >
-                / Digital Tradition collection
-              </p>
-              <p>
-                <a
-                  href="https://creativecommons.org/licenses/by/3.0/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  >CC BY 3.0</a
-                >。音源ファイルは未編集。ゲーム内で音量調整・ループ再生。
-              </p>
-            </div>
-          </details>
+            aria-label="音の設定を開く"
+            aria-expanded="false"
+            aria-controls="sound-panel"
+          >音</button>
+          <div id="sound-panel" class="sound-panel" role="group" aria-label="音の設定" hidden>
+            <button
+              id="sound"
+              type="button"
+              aria-label="音を消す"
+              aria-pressed="false"
+            >
+              音あり</button
+            ><label
+              >音量<input
+                id="volume"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value="0.35"
+                aria-label="音量"
+            /></label>
+            <details class="music-credit">
+              <summary aria-label="音楽クレジット">♪</summary>
+              <div>
+                <strong>音楽クレジット</strong>
+                <p>
+                  I've Been Working on the Railroad<br />Traditional / audio
+                  provided by
+                  <a
+                    href="https://www.8notes.com/scores/6974.asp"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >8notes.com</a
+                  >
+                  / Digital Tradition collection
+                </p>
+                <p>
+                  <a
+                    href="https://creativecommons.org/licenses/by/3.0/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >CC BY 3.0</a
+                  >。音源ファイルは未編集。ゲーム内で音量調整・ループ再生。
+                </p>
+              </div>
+            </details>
+          </div>
         </div>
         <button
           id="pause"

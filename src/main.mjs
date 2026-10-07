@@ -135,6 +135,38 @@ pauseButton.addEventListener("click", () => {
   audio.unlock();
   togglePause();
 });
+const soundControls = document.querySelector(".sound-controls"),
+  soundToggle = document.querySelector("#sound-toggle"),
+  soundPanel = document.querySelector("#sound-panel"),
+  musicCredit = document.querySelector(".music-credit");
+/** 設定欄だけを開閉し、音量やミュート状態は変えない。 */
+function setSoundOpen(open, restoreFocus = false) {
+  const focusInside = soundPanel.contains(document.activeElement);
+  soundPanel.hidden = !open;
+  soundToggle.setAttribute("aria-expanded", String(open));
+  soundToggle.setAttribute("aria-label", open ? "音の設定を閉じる" : "音の設定を開く");
+  if (!open) {
+    musicCredit.open = false;
+    if (restoreFocus || focusInside) soundToggle.focus();
+  }
+}
+soundToggle.addEventListener("click", () => {
+  setSoundOpen(soundPanel.hidden);
+});
+// 閉じるために遊び場をタップした指では、線路を描き始めない。
+document.addEventListener("pointerdown", (e) => {
+  if (soundPanel.hidden || soundControls.contains(e.target)) return;
+  setSoundOpen(false);
+  if (e.target === canvas) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, { capture: true });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || soundPanel.hidden) return;
+  e.preventDefault();
+  setSoundOpen(false, true);
+});
 const soundButton = document.querySelector("#sound");
 soundButton.addEventListener("click", () => {
   audio.unlock();

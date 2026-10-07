@@ -16,7 +16,10 @@ test("real UI handlers isolate captures, accept empty coalesced events and clean
         addEventListener(n, f) {
           this.handlers[n] = f;
         },
-        setAttribute() {},
+        attributes: {},
+        setAttribute(n, value) { this.attributes[n] = value; },
+        contains(node) { return node === this; },
+        focus() { document.activeElement = this; },
         classList: { add() {}, toggle() {} },
         querySelector: () => el("p"),
         clientWidth: 800,
@@ -71,6 +74,35 @@ test("real UI handlers isolate captures, accept empty coalesced events and clean
     fs.readFileSync("src/main.mjs", "utf8").replace(/^import[^\n]*\n/gm, ""),
     context,
   );
+  const toggle = el("#sound-toggle"), panel = el("#sound-panel");
+  panel.hidden = true;
+  const audioBefore = JSON.parse(window.render_game_to_text()).audio;
+  toggle.handlers.click();
+  assert.equal(panel.hidden, false);
+  assert.equal(toggle.attributes["aria-expanded"], "true");
+  toggle.handlers.click();
+  assert.equal(panel.hidden, true);
+  assert.equal(toggle.attributes["aria-expanded"], "false");
+  assert.deepEqual(JSON.parse(window.render_game_to_text()).audio, audioBefore);
+  toggle.handlers.click();
+  document.activeElement = panel;
+  el(".music-credit").open = true;
+  document.handlers.keydown({ key: "Escape", preventDefault() {} });
+  assert.equal(panel.hidden, true);
+  assert.equal(document.activeElement, toggle);
+  assert.equal(el(".music-credit").open, false);
+  toggle.handlers.click();
+  document.handlers.pointerdown({ target: el(".sound-controls") });
+  assert.equal(panel.hidden, false);
+  let prevented = false, stopped = false;
+  document.handlers.pointerdown({
+    target: el("#canvas"),
+    preventDefault() { prevented = true; },
+    stopPropagation() { stopped = true; },
+  });
+  assert.equal(panel.hidden, true);
+  assert.ok(prevented && stopped);
+  assert.equal(world.railway.routes.length, 0);
   const c = el("#canvas"),
     event = (type, id, x = 100, y = 400) =>
       c.handlers[type]({

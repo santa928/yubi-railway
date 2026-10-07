@@ -304,21 +304,40 @@ footer {
   z-index: 2;
   left: 18px;
   bottom: max(80px, calc(env(safe-area-inset-bottom) + 65px));
-  display: flex;
-  align-items: center;
-  gap: 12px;
   background: #fffdf0ed;
   border: 1px solid #ffffffc2;
   border-radius: 16px;
-  padding: 8px 12px;
+  padding: 0;
   color: #345748;
+}
+#sound-toggle {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+}
+.sound-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  padding: 8px 12px;
+  background: #fffdf0;
+  border: 1px solid #ffffffc2;
+  border-radius: 16px;
+  box-shadow: 0 3px 18px #3c603219;
+}
+.sound-panel[hidden] {
+  display: none;
 }
 .sound-controls button {
   border: 0;
   background: transparent;
   color: inherit;
   font-weight: 750;
-  min-width: 48px;
+  min-width: 44px;
   min-height: 32px;
   padding: 0;
 }
@@ -359,7 +378,7 @@ footer {
   display: grid;
   place-items: center;
   min-height: 44px;
-  min-width: 24px;
+  min-width: 44px;
   font-size: 18px;
 }
 .music-credit summary::-webkit-details-marker {
@@ -370,6 +389,7 @@ footer {
   border-radius: 5px;
 }
 .music-credit div {
+  white-space: normal;
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
